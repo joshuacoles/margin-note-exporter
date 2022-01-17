@@ -86,30 +86,27 @@ impl Exporter {
     }
 
     fn create_id_map(note_dir: &Path) -> HashMap<String, PathBuf> {
-        let contents = fs::read_dir(note_dir).expect("Failed to read note dir");
+        let note_glob = note_dir.join("*.md");
+        let note_glob = note_glob.to_str().expect("Invalid note_dir path");
+        let contents = glob(note_glob).expect("Failed to read note dir");
         let matter = Matter::<YAML>::new();
 
         contents
-            .map(|entry| {
-                let path = entry.unwrap().path();
+            .filter_map(|entry| {
+                let path = entry.unwrap().to_path_buf();
                 let NoteFrontMatter { margin_note_id } = matter.parse(&fs::read_to_string(&path)
-                    .expect("Failed to read note"))
-                    .data.unwrap().deserialize().expect("Front matter was not of desired format");
+                    .expect(&format!("Failed to read note, {}", path.to_string_lossy())))
+                    .data.and_then(|data| data.deserialize().ok())?;
 
-                (margin_note_id, path)
+                Some((margin_note_id, path))
             }).collect()
     }
 
     pub fn copy_images(&self) -> std::io::Result<()> {
-        let images = glob(self.oo3.0.join("*.png").to_str().unwrap()).expect("Failed to read glob pattern");
+        let images = self.oo3.images();
 
-        for entry in images {
-            match entry {
-                Ok(path) => {
-                    fs::copy(&path, self.image_dir.join(path.file_name().unwrap()))?;
-                }
-                Err(e) => println!("Failed {:?}", e),
-            };
+        for path in images {
+            fs::copy(&path, self.image_dir.join(path.file_name().unwrap()))?;
         }
 
         Ok(())

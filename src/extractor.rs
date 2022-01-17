@@ -119,8 +119,10 @@ impl MarginNotesExtractor {
 
     fn title_of(&self, item: Node, margin_note_id: &Option<String>) -> String {
         match self.title_path.evaluate(&self.xpath_context, item).unwrap() {
-            Value::String(title) => {
-                let given_title = TITLE_CLEANUP_REGEX.replace_all(title.trim(), " ");
+            Value::String(given_title) => {
+                let given_title = given_title.trim();
+                let given_title = TITLE_CLEANUP_REGEX.replace_all(given_title, " ");
+                let given_title = given_title.trim();
 
                 if !given_title.is_empty() {
                     given_title.to_string()

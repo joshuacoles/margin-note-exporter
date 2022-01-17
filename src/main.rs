@@ -11,14 +11,8 @@ extern crate lazy_static;
 extern crate flate2;
 extern crate glob;
 
-use flate2::read::GzDecoder;
-
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
 use extractor::MarginNotesExtractor;
 use crate::exporter::{Exporter, OO3};
-use crate::extractor::parse_xml;
 
 
 // Group in export by Book Title (ie by source)
@@ -32,6 +26,6 @@ fn main() {
         "/Users/joshuacoles/Library/Mobile Documents/iCloud~md~obsidian/Documents/TestBed/img"
     );
 
-    exporter.copy_images();
-    exporter.export_notes();
+    exporter.copy_images().expect("Failed to copy images");
+    exporter.export_notes().expect("Failed to export notes");
 }
