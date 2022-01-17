@@ -1,10 +1,9 @@
-use std::collections::HashSet;
 use lazy_static::lazy_static;
 use sxd_document::{Package, parser};
 use sxd_xpath::{Context, Factory, Value, XPath};
 use sxd_xpath::nodeset::Node;
 use regex::Regex;
-use crate::Item;
+use crate::item::Item;
 
 pub struct MarginNotesExtractor {
     xpath_context: Context<'static>,

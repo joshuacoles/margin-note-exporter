@@ -1,18 +1,121 @@
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
-use crate::{Item, MarginNotes};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use flate2::read::GzDecoder;
+use gray_matter::Matter;
+use gray_matter::engine::YAML;
+use serde::Deserialize;
 use glob::glob;
+use sxd_document::Package;
+use crate::extractor::parse_xml;
+use crate::{item::Item, MarginNotesExtractor};
 
-impl MarginNotes {
-    pub fn export_notes_to<P: Into<PathBuf>>(&self, root: P) -> std::io::Result<()> {
-        let root = root.into();
+pub struct OO3(PathBuf);
 
-        match fs::metadata(&root) {
-            Ok(x) if x.is_dir() => (),
-            Ok(_) => panic!("Notes directory path exists but is not a file"),
-            _ => fs::create_dir(&root)?
-        };
+impl OO3 {
+    pub(crate) fn new<P: Into<PathBuf>>(p: P) -> OO3 {
+        let p = p.into();
+        fs::metadata(&p).unwrap();
+        OO3(p)
+    }
+}
 
+impl OO3 {
+    pub fn images(&self) -> impl Iterator<Item=PathBuf> {
+        glob::glob(self.0.join("*.png").to_str().unwrap())
+            .expect("Failed to read glob pattern")
+            .map(|ee| ee.unwrap())
+    }
+
+    fn xml_raw(&self) -> String {
+        let gzip_xml = fs::read(self.0.join("contents.xml")).unwrap();
+        let gzip_xml = gzip_xml.as_slice();
+        let mut raw_xml = GzDecoder::new(gzip_xml);
+        let mut xml = String::new();
+        raw_xml.read_to_string(&mut xml).unwrap();
+        xml
+    }
+
+    pub fn xml(&self) -> Package {
+        let xml = self.xml_raw();
+        parse_xml(&xml)
+    }
+}
+
+pub struct Exporter {
+    pub note_dir: PathBuf,
+    pub image_dir: PathBuf,
+
+    oo3: OO3,
+    id_map: HashMap<String, PathBuf>,
+}
+
+#[derive(Deserialize, Debug)]
+struct NoteFrontMatter {
+    margin_note_id: String,
+}
+
+impl Exporter {
+    pub(crate) fn new<P1: Into<PathBuf>, P2: Into<PathBuf>>(
+        oo3: OO3,
+        note_dir: P1,
+        image_dir: P2,
+    ) -> Exporter {
+        let note_dir = note_dir.into();
+        let image_dir = image_dir.into();
+
+        Exporter::validate_dir(&note_dir).unwrap();
+        Exporter::validate_dir(&image_dir).unwrap();
+
+        Exporter {
+            oo3,
+            id_map: Exporter::create_id_map(&note_dir),
+
+            note_dir,
+            image_dir,
+        }
+    }
+
+    fn validate_dir(dir: &Path) -> std::io::Result<()> {
+        match fs::metadata(&dir) {
+            Ok(x) if x.is_dir() => Ok(()),
+            Ok(_) => panic!("Images directory path exists but is not a file"),
+            _ => fs::create_dir(&dir)
+        }
+    }
+
+    fn create_id_map(note_dir: &Path) -> HashMap<String, PathBuf> {
+        let contents = fs::read_dir(note_dir).expect("Failed to read note dir");
+        let matter = Matter::<YAML>::new();
+
+        contents
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let NoteFrontMatter { margin_note_id } = matter.parse(&fs::read_to_string(&path)
+                    .expect("Failed to read note"))
+                    .data.unwrap().deserialize().expect("Front matter was not of desired format");
+
+                (margin_note_id, path)
+            }).collect()
+    }
+
+    pub fn copy_images(&self) -> std::io::Result<()> {
+        let images = glob(self.oo3.0.join("*.png").to_str().unwrap()).expect("Failed to read glob pattern");
+
+        for entry in images {
+            match entry {
+                Ok(path) => {
+                    fs::copy(&path, self.image_dir.join(path.file_name().unwrap()))?;
+                }
+                Err(e) => println!("Failed {:?}", e),
+            };
+        }
+
+        Ok(())
+    }
+
+    pub fn export_notes(&self) -> std::io::Result<()> {
         fn recurse(root: &PathBuf, items: &Vec<Item>) -> std::io::Result<()> {
             for item in items {
                 std::fs::write(root.join(item.title.clone()).with_extension("md"), item.to_note())?;
@@ -22,73 +125,9 @@ impl MarginNotes {
             Ok(())
         }
 
-        recurse(&root, &self.root_items)
-    }
+        let extractor = MarginNotesExtractor::new();
+        let root_items = extractor.root_items(self.oo3.xml());
 
-    pub fn copy_images_to<P: Into<PathBuf>>(&self, root: P) -> std::io::Result<()> {
-        let root = root.into();
-
-        match fs::metadata(&root) {
-            Ok(x) if x.is_dir() => (),
-            Ok(_) => panic!("Images directory path exists but is not a file"),
-            _ => fs::create_dir(&root)?
-        };
-
-        let images = glob(self.oo3_path.join("*.png").to_str().unwrap()).expect("Failed to read glob pattern");
-
-        for entry in images {
-            match entry {
-                Ok(path) => {
-                    fs::copy(&path, root.join(path.file_name().unwrap()))?;
-                }
-                Err(e) => println!("Failed {:?}", e),
-            };
-        }
-
-        Ok(())
-    }
-}
-
-impl Item {
-    pub fn toc(&self) -> String {
-        fn toc_recur(item: &Item, indent: usize) -> String {
-            let vec: Vec<String> = item.children.iter().map(|child| toc_recur(child, indent + 1)).collect();
-
-            format!("{indent}- [[{title}]]{child_nl}{children}",
-                    indent = "  ".repeat(indent),
-                    title = item.title,
-                    child_nl = if vec.is_empty() { "" } else { "\n" },
-                    children = vec.join("\n")
-            )
-        }
-
-        toc_recur(self, 0)
-    }
-
-    fn immediate_toc(&self) -> String {
-        self.children.iter().map(|item|
-            format!("- [[{}]]", item.title)
-        ).collect::<Vec<String>>().join("\n")
-    }
-
-    pub fn to_note(&self) -> String {
-        let blocks = vec![
-            self.margin_note_id.clone().map(|id| format!("---\nmargin-note-id: {}\n---", id)),
-            Some(format!("# {}", self.title)),
-            self.margin_note_url.clone().map(|url| format!("> [source]({})", url)),
-            Some(self.immediate_toc()),
-            self.comments.clone(),
-            Some(
-                self.image_ids.iter()
-                    .map(|image_id| format!("![[{}.png]]", image_id))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            ),
-        ];
-
-        blocks.iter()
-            .filter_map(|v| v.clone())
-            .collect::<Vec<String>>()
-            .join("\n\n")
+        recurse(&self.note_dir, &root_items)
     }
 }
