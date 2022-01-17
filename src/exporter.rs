@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use flate2::read::GzDecoder;
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
-use serde::Deserialize;
 use glob::glob;
 use sxd_document::Package;
 use crate::extractor::parse_xml;
 use crate::{item::Item, MarginNotesExtractor};
+use crate::item::NoteFrontMatter;
 
 pub struct OO3(PathBuf);
 
@@ -48,12 +48,7 @@ pub struct Exporter {
     pub image_dir: PathBuf,
 
     oo3: OO3,
-    id_map: HashMap<String, PathBuf>,
-}
-
-#[derive(Deserialize, Debug)]
-struct NoteFrontMatter {
-    margin_note_id: String,
+    previous_id_map: HashMap<String, PathBuf>,
 }
 
 impl Exporter {
@@ -70,7 +65,7 @@ impl Exporter {
 
         Exporter {
             oo3,
-            id_map: Exporter::create_id_map(&note_dir),
+            previous_id_map: Exporter::create_id_map(&note_dir),
 
             note_dir,
             image_dir,
@@ -94,11 +89,11 @@ impl Exporter {
         contents
             .filter_map(|entry| {
                 let path = entry.unwrap().to_path_buf();
-                let NoteFrontMatter { margin_note_id } = matter.parse(&fs::read_to_string(&path)
+                let NoteFrontMatter { margin_note_id, .. } = matter.parse(&fs::read_to_string(&path)
                     .expect(&format!("Failed to read note, {}", path.to_string_lossy())))
                     .data.and_then(|data| data.deserialize().ok())?;
 
-                Some((margin_note_id, path))
+                margin_note_id.map(|margin_note_id| (margin_note_id, path))
             }).collect()
     }
 
@@ -112,19 +107,36 @@ impl Exporter {
         Ok(())
     }
 
-    pub fn export_notes(&self) -> std::io::Result<()> {
-        fn recurse(root: &PathBuf, items: &Vec<Item>) -> std::io::Result<()> {
-            for item in items {
-                std::fs::write(root.join(item.title.clone()).with_extension("md"), item.to_note())?;
-                recurse(root, &item.children)?;
+    fn previous_item_path(&self, item: &Item) -> Option<PathBuf> {
+        item.margin_note_id.clone().and_then(|margin_note_id| self.previous_id_map.get(&margin_note_id).cloned())
+    }
+
+    fn path_of(&self, root: &PathBuf, item: &Item) -> PathBuf {
+        root.join(item.title.clone()).with_extension("md")
+    }
+
+    fn recurse_export_notes(&self, root: &PathBuf, items: &Vec<Item>) -> std::io::Result<()> {
+        for item in items {
+            let previous_path = self.previous_item_path(item);
+            let new_path = root.join(item.title.clone()).with_extension("md");
+
+            // Delete old file if we have renamed the note since
+            match previous_path {
+                Some(previous_path) if previous_path == new_path => std::fs::remove_file(previous_path)?,
+                _ => (),
             }
 
-            Ok(())
+            std::fs::write(new_path, item.to_note())?;
+            self.recurse_export_notes(root, &item.children)?;
         }
 
+        Ok(())
+    }
+
+    pub fn export_notes(&self) -> std::io::Result<()> {
         let extractor = MarginNotesExtractor::new();
         let root_items = extractor.root_items(self.oo3.xml());
 
-        recurse(&self.note_dir, &root_items)
+        self.recurse_export_notes(&self.note_dir, &root_items)
     }
 }

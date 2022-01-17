@@ -1,3 +1,7 @@
+use gray_matter::engine::YAML;
+use crate::MarginNotesExtractor;
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug)]
 pub struct Item {
     pub title: String,
@@ -32,7 +36,7 @@ impl Item {
 
     pub fn to_note(&self) -> String {
         let blocks = vec![
-            self.margin_note_id.clone().map(|id| format!("---\nmargin-note-id: {}\n---", id)),
+            Some(format!("{}---", serde_yaml::to_string(&self.metadata()).unwrap())),
             Some(format!("# {}", self.title)),
             self.margin_note_url.clone().map(|url| format!("> [source]({})", url)),
             Some(self.immediate_toc()),
@@ -50,4 +54,17 @@ impl Item {
             .collect::<Vec<String>>()
             .join("\n\n")
     }
+
+    pub fn metadata(&self) -> NoteFrontMatter {
+        NoteFrontMatter {
+            tags: vec!["source-margin-note".to_string()],
+            margin_note_id: self.margin_note_id.clone(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct NoteFrontMatter {
+    pub tags: Vec<String>,
+    pub margin_note_id: Option<String>,
 }
