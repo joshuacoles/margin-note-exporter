@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
 use glob::glob;
-use indextree::Arena;
+use indextree::{Arena, Node, NodeId};
 use crate::{item::Item, MarginNotesExtractor};
 use crate::item::NoteFrontMatter;
 use crate::oo3::OO3File;
@@ -89,8 +89,11 @@ impl Exporter {
         root.join(item.title.clone()).with_extension("md")
     }
 
-    fn recurse_export_notes(&self, root: &PathBuf, items: &Vec<Item>) -> std::io::Result<()> {
-        for item in items {
+    fn recurse_export_notes(&self, root: &PathBuf, item_ids: &Vec<NodeId>) -> std::io::Result<()> {
+        for item_id in item_ids {
+            let node = self.items_arena.get(*item_id).unwrap();
+            let item = node.get();
+
             let previous_path = self.previous_item_path(item);
             let new_path = root.join(item.title.clone()).with_extension("md");
 
@@ -100,17 +103,55 @@ impl Exporter {
                 _ => (),
             }
 
-            std::fs::write(new_path, item.to_note())?;
-            self.recurse_export_notes(root, &item.children)?;
+            std::fs::write(new_path, self.note_for(node))?;
+            let vec = item_id.children(&self.items_arena).collect();
+            self.recurse_export_notes(root, &vec)?;
         }
 
         Ok(())
     }
 
-    pub fn export_notes(&self) -> std::io::Result<()> {
-        let extractor = MarginNotesExtractor::new();
+    pub fn export_notes(&mut self) -> std::io::Result<()> {
+        let mut extractor = MarginNotesExtractor::new(&mut self.items_arena);
         let root_items = extractor.root_items(self.oo3.xml());
 
         self.recurse_export_notes(&self.note_dir, &root_items)
+    }
+
+    fn note_for(&self, node: &Node<Item>) -> String {
+        let item = node.get();
+        let id = self.items_arena.get_node_id(node).unwrap();
+
+        let blocks = vec![
+            // Metadata
+            Some(format!("{}---", serde_yaml::to_string(&item.metadata()).unwrap())),
+
+            // Title
+            Some(format!("# {}", item.title)),
+
+            // Source link
+            item.margin_note_url.clone().map(|url| format!("> [source]({})", url)),
+
+            // Children
+            Some(id.children(&self.items_arena).map(|item|
+                format!("- [[{}]]", self.items_arena.get(item).unwrap().get().title)
+            ).collect::<Vec<String>>().join("\n")),
+
+            // Comments
+            item.comments.clone(),
+
+            // Images
+            Some(
+                item.image_ids.iter()
+                    .map(|image_id| format!("![[{}.png]]", image_id))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            ),
+        ];
+
+        blocks.iter()
+            .filter_map(|v| v.clone())
+            .collect::<Vec<String>>()
+            .join("\n\n")
     }
 }

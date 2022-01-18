@@ -22,7 +22,7 @@ use crate::oo3::OO3File;
 fn main() {
     let oo3: OO3File = OO3File::new("./ps1av2.oo3");
 
-    let exporter: Exporter = Exporter::new(
+    let mut exporter: Exporter = Exporter::new(
         oo3,
         "/Users/joshuacoles/Library/Mobile Documents/iCloud~md~obsidian/Documents/TestBed/PS",
         "/Users/joshuacoles/Library/Mobile Documents/iCloud~md~obsidian/Documents/TestBed/img"
