@@ -4,15 +4,20 @@ use std::path::{Path, PathBuf};
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
 use glob::glob;
+use indextree::Arena;
 use crate::{item::Item, MarginNotesExtractor};
 use crate::item::NoteFrontMatter;
 use crate::oo3::OO3File;
 
+// The main class of the app
 pub struct Exporter {
+    oo3: OO3File,
+
     pub note_dir: PathBuf,
     pub image_dir: PathBuf,
 
-    oo3: OO3File,
+    items_arena: Arena<Item>,
+
     previous_id_map: HashMap<String, PathBuf>,
 }
 
@@ -28,8 +33,12 @@ impl Exporter {
         Exporter::validate_dir(&note_dir).unwrap();
         Exporter::validate_dir(&image_dir).unwrap();
 
+        let mut items_arena = Arena::new();
+
         Exporter {
             oo3,
+            items_arena,
+
             previous_id_map: Exporter::create_id_map(&note_dir),
 
             note_dir,

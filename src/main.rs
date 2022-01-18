@@ -11,11 +11,11 @@ extern crate regex;
 extern crate lazy_static;
 extern crate flate2;
 extern crate glob;
+extern crate indextree;
 
 use extractor::MarginNotesExtractor;
 use crate::exporter::Exporter;
 use crate::oo3::OO3File;
-
 
 // Group in export by Book Title (ie by source)
 // Check non-uniqueness of names and compensate (maybe append parent title in ()'s)
