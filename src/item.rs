@@ -1,5 +1,3 @@
-use gray_matter::engine::YAML;
-use crate::MarginNotesExtractor;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]

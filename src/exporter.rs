@@ -1,59 +1,24 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use flate2::read::GzDecoder;
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
 use glob::glob;
-use sxd_document::Package;
-use crate::extractor::parse_xml;
 use crate::{item::Item, MarginNotesExtractor};
 use crate::item::NoteFrontMatter;
-
-pub struct OO3(PathBuf);
-
-impl OO3 {
-    pub(crate) fn new<P: Into<PathBuf>>(p: P) -> OO3 {
-        let p = p.into();
-        fs::metadata(&p).unwrap();
-        OO3(p)
-    }
-}
-
-impl OO3 {
-    pub fn images(&self) -> impl Iterator<Item=PathBuf> {
-        glob::glob(self.0.join("*.png").to_str().unwrap())
-            .expect("Failed to read glob pattern")
-            .map(|ee| ee.unwrap())
-    }
-
-    fn xml_raw(&self) -> String {
-        let gzip_xml = fs::read(self.0.join("contents.xml")).unwrap();
-        let gzip_xml = gzip_xml.as_slice();
-        let mut raw_xml = GzDecoder::new(gzip_xml);
-        let mut xml = String::new();
-        raw_xml.read_to_string(&mut xml).unwrap();
-        xml
-    }
-
-    pub fn xml(&self) -> Package {
-        let xml = self.xml_raw();
-        parse_xml(&xml)
-    }
-}
+use crate::oo3::OO3File;
 
 pub struct Exporter {
     pub note_dir: PathBuf,
     pub image_dir: PathBuf,
 
-    oo3: OO3,
+    oo3: OO3File,
     previous_id_map: HashMap<String, PathBuf>,
 }
 
 impl Exporter {
     pub(crate) fn new<P1: Into<PathBuf>, P2: Into<PathBuf>>(
-        oo3: OO3,
+        oo3: OO3File,
         note_dir: P1,
         image_dir: P2,
     ) -> Exporter {

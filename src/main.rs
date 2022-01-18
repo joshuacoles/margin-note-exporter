@@ -1,6 +1,7 @@
 mod extractor;
 mod item;
 mod exporter;
+mod oo3;
 
 extern crate serde;
 extern crate gray_matter;
@@ -12,13 +13,14 @@ extern crate flate2;
 extern crate glob;
 
 use extractor::MarginNotesExtractor;
-use crate::exporter::{Exporter, OO3};
+use crate::exporter::Exporter;
+use crate::oo3::OO3File;
 
 
 // Group in export by Book Title (ie by source)
 // Check non-uniqueness of names and compensate (maybe append parent title in ()'s)
 fn main() {
-    let oo3: OO3 = OO3::new("./ps1av2.oo3");
+    let oo3: OO3File = OO3File::new("./ps1av2.oo3");
 
     let exporter: Exporter = Exporter::new(
         oo3,
