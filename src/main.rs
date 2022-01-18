@@ -22,8 +22,12 @@ use crate::oo3::OO3File;
 fn main() {
     let oo3: OO3File = OO3File::new("./ps1av2.oo3");
 
-    let mut exporter: Exporter = Exporter::new(
+    let extractor = MarginNotesExtractor::new();
+    let extracted_notes = extractor.read_items(oo3.xml());
+
+    let exporter: Exporter = Exporter::new(
         oo3,
+        extracted_notes,
         "/Users/joshuacoles/Library/Mobile Documents/iCloud~md~obsidian/Documents/TestBed/PS",
         "/Users/joshuacoles/Library/Mobile Documents/iCloud~md~obsidian/Documents/TestBed/img"
     );

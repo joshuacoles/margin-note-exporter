@@ -6,7 +6,7 @@ use sxd_xpath::nodeset::Node;
 use regex::Regex;
 use crate::item::Item;
 
-pub struct MarginNotesExtractor<'arena> {
+pub struct MarginNotesExtractor {
     xpath_context: Context<'static>,
 
     root_items_path: XPath,
@@ -18,7 +18,12 @@ pub struct MarginNotesExtractor<'arena> {
     image_id_path_2: XPath,
     comments_path: XPath,
 
-    arena: &'arena mut Arena<Item>
+    arena: Arena<Item>
+}
+
+pub struct ExtractedNotes {
+    pub items_arena: Arena<Item>,
+    pub roots: Vec<NodeId>,
 }
 
 lazy_static! {
@@ -35,14 +40,14 @@ pub fn parse_xml(xml: &str) -> Package {
     parser::parse(xml.as_ref()).expect("Failed to parse XML")
 }
 
-impl<'arena> MarginNotesExtractor<'arena> {
+impl MarginNotesExtractor {
     fn create_context() -> Context<'static> {
         let mut ctx = sxd_xpath::context::Context::new();
         ctx.set_namespace("o", "http://www.omnigroup.com/namespace/OmniOutliner/v3");
         ctx
     }
 
-    pub fn new(arena: &mut Arena<Item>) -> MarginNotesExtractor {
+    pub fn new() -> MarginNotesExtractor {
         let xpath_factory = Factory::new();
 
         let root_items_path = xpath_factory.build("/o:outline/o:root/o:item").unwrap().unwrap();
@@ -67,7 +72,14 @@ impl<'arena> MarginNotesExtractor<'arena> {
             children_path,
             comments_path,
 
-            arena
+            arena: Arena::new()
+        }
+    }
+
+    pub fn read_items(mut self, package: Package) -> ExtractedNotes {
+        ExtractedNotes {
+            roots: self.root_items(package),
+            items_arena: self.arena,
         }
     }
 
@@ -82,12 +94,13 @@ impl<'arena> MarginNotesExtractor<'arena> {
 
     fn create_item(&mut self, node: Node) -> NodeId {
         let (margin_note_url, margin_note_id) = self.extract_margin_note_url_and_id(node);
-        let title = self.extract_title(node, &margin_note_id);
+        let (given_title, title) = self.extract_title(node, &margin_note_id);
         let image_ids: Vec<String> = self.extract_image_ids(node);
 
         let comments: Option<String> = self.extract_comments(node);
 
         let item = Item {
+            given_title,
             title,
             margin_note_id,
             image_ids,
@@ -101,7 +114,7 @@ impl<'arena> MarginNotesExtractor<'arena> {
             Value::Nodeset(ns) => {
                 for node in ns.document_order() {
                     let child_id = self.create_item(node);
-                    node_id.append(child_id, self.arena)
+                    node_id.append(child_id, &mut self.arena)
                 }
             },
 
@@ -143,7 +156,7 @@ impl<'arena> MarginNotesExtractor<'arena> {
         image_ids
     }
 
-    fn extract_title(&self, item: Node, margin_note_id: &Option<String>) -> String {
+    fn extract_title(&self, item: Node, margin_note_id: &Option<String>) -> (Option<String>, String) {
         match self.title_path.evaluate(&self.xpath_context, item).unwrap() {
             Value::String(given_title) => {
                 let given_title = given_title.trim();
@@ -151,10 +164,11 @@ impl<'arena> MarginNotesExtractor<'arena> {
                 let given_title = given_title.trim();
 
                 if !given_title.is_empty() {
-                    given_title.to_string()
+                    let string = given_title.to_string();
+                    (Some(string.clone()), string)
                 } else if let Some(id) = margin_note_id {
                     eprintln!("Warning using margin note id as title for {}", id.clone());
-                    id.clone()
+                    (None, id.clone())
                 } else {
                     panic!("Cannot determine title for {:#?}", item)
                 }
