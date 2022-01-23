@@ -51,8 +51,10 @@ impl MarginNotesExtractor {
         let xpath_factory = Factory::new();
 
         let root_items_path = xpath_factory.build("/o:outline/o:root/o:item").unwrap().unwrap();
+        // Replace this with first
         let title_path = xpath_factory.build("string(./o:values/o:text[1]/o:p/o:run/o:lit/text())").unwrap().unwrap();
         let margin_note_url_path = xpath_factory.build("./o:values/o:text[4]/o:p[2]/o:run/o:lit/o:cell/@href").unwrap().unwrap();
+        let book_path = xpath_factory.build("string(./o:values/o:text[3]/o:p/o:run/o:lit/text())").unwrap().unwrap();
 
         let image_id_path_1 = xpath_factory.build("./o:values//o:cell/@refid").unwrap().unwrap();
         let image_id_path_2 = xpath_factory.build("./o:note//o:cell/@refid").unwrap().unwrap();
@@ -93,18 +95,16 @@ impl MarginNotesExtractor {
     }
 
     fn create_item(&mut self, node: Node) -> NodeId {
-        let (margin_note_url, margin_note_id) = self.extract_margin_note_url_and_id(node);
-        let (given_title, title) = self.extract_title(node, &margin_note_id);
+        let margin_note_id = self.extract_margin_note_id(node);
+        let (given_title, _) = self.extract_title(node, &margin_note_id);
         let image_ids: Vec<String> = self.extract_image_ids(node);
 
         let comments: Option<String> = self.extract_comments(node);
 
         let item = Item {
             given_title,
-            title,
             margin_note_id,
             image_ids,
-            margin_note_url,
             comments,
         };
 
@@ -124,14 +124,13 @@ impl MarginNotesExtractor {
         node_id
     }
 
-    fn extract_margin_note_url_and_id(&self, item: Node) -> (Option<String>, Option<String>) {
+    fn extract_margin_note_id(&self, item: Node) -> Option<String> {
         let url = match self.margin_note_url_path.evaluate(&self.xpath_context, item).unwrap() {
             Value::Nodeset(mnu) => mnu.document_order_first().map(|n| n.string_value()),
             v => panic!("Unexpect XML when extracting url, got {:#?}", v)
         };
 
-        let id = url.clone().map(|url| url.clone().chars().skip(22).collect());
-        (url, id)
+        url.clone().map(|url| url.clone().chars().skip(22).collect())
     }
 
     fn extract_comments(&self, item: Node) -> Option<String> {

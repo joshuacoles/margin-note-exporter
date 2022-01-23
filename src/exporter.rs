@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
 use glob::glob;
-use indextree::{Node, NodeId};
+use indextree::{Node};
+use lazy_static::lazy_static;
+use regex::Regex;
 use crate::item::Item;
 use crate::extractor::ExtractedNotes;
 use crate::item::NoteFrontMatter;
@@ -20,6 +22,51 @@ pub struct Exporter {
     notes: ExtractedNotes,
 
     previous_id_map: HashMap<String, PathBuf>,
+    note_name_map: HashMap<String, String>,
+}
+
+impl Exporter {
+    fn initial_note_name(item: &Item) -> String {
+        lazy_static! {
+            static ref PATH_SAFE_REGEX: Regex = Regex::new("/").unwrap();
+        }
+
+        let clean_name = if let Some(given_title) = &item.given_title {
+            PATH_SAFE_REGEX.replace_all(given_title, "(or)").to_string()
+        } else if let Some(margin_note_id) = &item.margin_note_id {
+            margin_note_id.clone()
+        } else {
+            panic!("No way to determine note title for {:?}", item);
+        };
+
+        format!("(LIT) {}", clean_name)
+    }
+
+    fn create_node_name_map(notes: &ExtractedNotes) -> HashMap<String, String> {
+        let mut out = HashMap::new();
+
+        for node in notes.items_arena.iter() {
+            let item = node.get();
+            if let Some(id) = &item.margin_note_id {
+                let mut name = Self::initial_note_name(item);
+
+                while out.values().find(|v| **v == name).is_some() {
+                    if let Some(parent) = node.parent() {
+                        let parent = notes.items_arena.get(parent).unwrap().get();
+                        name.push_str(&format!(" ({})", Self::initial_note_name(parent)));
+                    } else {
+                        println!("Unable to disambiguate note names for {:?}", item);
+                    }
+                }
+
+                out.insert(id.clone(), name);
+            } else {
+                continue;
+            }
+        }
+
+        out
+    }
 }
 
 impl Exporter {
@@ -35,11 +82,15 @@ impl Exporter {
         Exporter::validate_dir(&note_dir).unwrap();
         Exporter::validate_dir(&image_dir).unwrap();
 
+        let previous_id_map = Exporter::create_previous_id_map(&note_dir);
+        let note_name_map = Exporter::create_node_name_map(&notes);
+
         Exporter {
             oo3,
             notes,
 
-            previous_id_map: Exporter::create_id_map(&note_dir),
+            previous_id_map,
+            note_name_map,
 
             note_dir,
             image_dir,
@@ -49,12 +100,12 @@ impl Exporter {
     fn validate_dir(dir: &Path) -> std::io::Result<()> {
         match fs::metadata(&dir) {
             Ok(x) if x.is_dir() => Ok(()),
-            Ok(_) => panic!("Images directory path exists but is not a file"),
-            _ => fs::create_dir(&dir)
+            Ok(_) => panic!("Directory path exists but is not a file"),
+            _ => fs::create_dir_all(&dir)
         }
     }
 
-    fn create_id_map(note_dir: &Path) -> HashMap<String, PathBuf> {
+    fn create_previous_id_map(note_dir: &Path) -> HashMap<String, PathBuf> {
         let note_glob = note_dir.join("*.md");
         let note_glob = note_glob.to_str().expect("Invalid note_dir path");
         let contents = glob(note_glob).expect("Failed to read note dir");
@@ -85,8 +136,16 @@ impl Exporter {
         item.margin_note_id.clone().and_then(|margin_note_id| self.previous_id_map.get(&margin_note_id).cloned())
     }
 
+    fn note_name_of(&self, item: &Item) -> String {
+        if let Some(margin_note_id) = &item.margin_note_id {
+            self.note_name_map.get(margin_note_id).unwrap().clone()
+        } else {
+            Self::initial_note_name(item)
+        }
+    }
+
     fn path_of(&self, root: &PathBuf, item: &Item) -> PathBuf {
-        root.join(item.title.clone()).with_extension("md")
+        root.join(self.note_name_of(item)).with_extension("md")
     }
 
     fn export_all_notes(&self) -> std::io::Result<()> {
@@ -94,42 +153,18 @@ impl Exporter {
 
         for item_node in self.notes.items_arena.iter() {
             let item = item_node.get();
-            let item_id = self.notes.items_arena.get_node_id(item_node).unwrap();
 
             let previous_path = self.previous_item_path(item);
             let new_path = self.path_of(root, item);
 
             // Delete old file if we have renamed the note since
+            // TODO Handle title overlaps or at least warn
             match previous_path {
                 Some(previous_path) if previous_path == new_path => std::fs::remove_file(previous_path)?,
                 _ => (),
             }
 
-            std::fs::write(new_path, self.note_for(item_node))?;
-            let vec = item_id.children(&self.notes.items_arena).collect();
-            self.recurse_export_notes(root, &vec)?;
-        }
-
-        Ok(())
-    }
-
-    fn recurse_export_notes(&self, root: &PathBuf, item_ids: &Vec<NodeId>) -> std::io::Result<()> {
-        for item_id in item_ids {
-            let node = self.notes.items_arena.get(*item_id).unwrap();
-            let item = node.get();
-
-            let previous_path = self.previous_item_path(item);
-            let new_path = self.path_of(root, item);
-
-            // Delete old file if we have renamed the note since
-            match previous_path {
-                Some(previous_path) if previous_path == new_path => std::fs::remove_file(previous_path)?,
-                _ => (),
-            }
-
-            std::fs::write(new_path, self.note_for(node))?;
-            let vec = item_id.children(&self.notes.items_arena).collect();
-            self.recurse_export_notes(root, &vec)?;
+            std::fs::write(new_path.clone(), self.note_for(item_node)).expect(&format!("Failed to write file {}", new_path.clone().to_string_lossy()));
         }
 
         Ok(())
@@ -149,17 +184,17 @@ impl Exporter {
 
         let blocks = vec![
             // Metadata
-            Some(format!("{}---", serde_yaml::to_string(&item.metadata(parent)).unwrap())),
+            Some(format!("{}---", serde_yaml::to_string(&item.metadata(parent.map(|parent| self.note_name_of(parent)))).unwrap())),
 
             // Title
-            Some(format!("# {}", item.title)),
+            item.given_title.as_ref().map(|given_title| format!("# {}", given_title)),
 
             // Source link
-            item.margin_note_url.clone().map(|url| format!("> [source]({})", url)),
+            item.margin_note_url().map(|url| format!("> [source]({})", url)),
 
             // Children
             Some(id.children(&self.notes.items_arena).map(|item|
-                format!("- [[{}]]", self.notes.items_arena.get(item).unwrap().get().title)
+                format!("- [[{}]]", self.note_name_of(self.notes.items_arena.get(item).unwrap().get()))
             ).collect::<Vec<String>>().join("\n")),
 
             // Comments
@@ -179,4 +214,9 @@ impl Exporter {
             .collect::<Vec<String>>()
             .join("\n\n")
     }
+
+    // fn extract_text(&self, image_id: &String) -> String {
+    //     let image_path = self.image_dir.join(image_id).with_extension("png");
+    //     tesseract::ocr(image_path.to_str().unwrap(), "en-GB").expect("Failed to OCR")
+    // }
 }
